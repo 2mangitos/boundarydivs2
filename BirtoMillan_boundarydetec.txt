@@ -1,0 +1,363 @@
+%Boundary detection code
+&Marlene Brito-Millan
+%Automatically loads files from all runs. Finds boundaries for multiple trials.
+%final data table -> fuldatamat divided into a CO table and a MA table.
+    %1)wattlt = inflection pt
+    %2)wattRt calc from log diff space
+    %3)wShat = mean of slopes
+
+%Assign pathway files to cell array to be automatically opened and processed… For example, cell array - names 
+names (1,1)= {'p30s3x3brf300REG01y50'};
+names (1,2)= {'p30s3x3brf300RAN01y50'};
+names (1,3)= {'p30s3x3brf300REG02clu31x31y85'}; 
+names (1,4)= {'p30s3x3brf300REG02clu28x28y120'};
+names (1,5)= {'p30s3x3brf300REG01clu24x25y100'};
+names (1,6)= {'p30s3x3brf300REG02clu18x19y100'};
+names (1,7)= {'p30s3x3brf300REG02clu12x13y130'}; 
+names (1,8)= {'p30s3x3brf300REG01clu9x10y120'};
+names (1,9)= {'p30s3x3brf300REG02clu7x7y125'};
+names (1,10)= {'p30s3x3brf300REG02clu4x4y150'};
+names (1,11)= {'p30s3x3brf300REG02clu2x2y180'};
+names (1,12)= {'p30s3x3brf300CLU02y250'};
+.
+.
+.
+ 
+%SET-UP-------------------------------------------------------------------
+        numtrials = size(names);
+        trialst = 3;
+        
+        trajtypeCO = ones(numtrials(2),1);
+        trajtypeMA = ones(numtrials(2),1)*2; 
+        tottreat = numtrials(2);
+ 
+            
+        treat = [1 2 3 4 5 6 7 8 9 10 11 12]'; % 12 aggregation treatment levels
+        
+        aggCO = [0.660 0.711 0.721 0.744 0.776 0.831 0.886 0.913 0.936 0.963 0.982 0.991]';
+        aggPA = [1.330 1.155 1.114 1.023 0.895 0.676 0.457 0.348 0.256 0.147 0.074 0.037]';
+
+ 
+ 
+        % types(1,:) = {'storeCOneigh(:,9)','storeMAneigh(:,10)'};
+        % types(2,:) = {'storeMAneigh(:,10)','storeCOneigh(:,9)'};
+ 
+        types(1,:) = {'store_num_sp12','store_num_sp3'};
+        types(2,:) = {'store_num_sp3','store_num_sp12'};
+        deltat = 0.025;
+        dmcounter = 1;
+        
+        datamatCO = zeros(numtrials(1),tottreat);
+        datamatMA = zeros(numtrials(1),tottreat);    
+        fuldatamatCO = zeros(numtrials(1),tottreat+6); %plus the additional 7 categories
+        fuldatamatMA = zeros(numtrials(1),tottreat+6);
+   
+        
+%------------------------------------------------------------------------
+ 
+        
+for N = 16;%trialst:numtrials(1)      % TRIAL  
+   
+    %Set up trial vector
+    trial = ones(numtrials(2),1)*N;
+ 
+    
+    for n = 1:numtrials(2) %TREATMENTS
+        command = sprintf('cd Results_Data');
+        eval(command)
+        command = sprintf('load -mat %s.mat store_num_sp12 store_num_sp3 Nt t k num_x num_y', names{N,n});
+        eval(command)
+        command = sprintf('cd ..');
+        eval(command)
+ 
+ 
+ 
+        for nn = 1%1:length(types)
+ 
+            %Assign arrays for smoothing%%%%%%%%%%%%%%%%%%%%%%%
+                % K is the diffusion constant
+                % deltat is the time step in your simulation, playing the role of delta x in diffusion
+                % DT is the meta-time step for your diffusion of the curve
+                % (DT*K/(2*deltat)) < 1/2, a standard value =1/4
+ 
+                sp_old = eval(types{nn,1});%/(num_x*num_y);
+                sp_cur = sp_old;
+                sp_oth = eval(types{nn,2});%/(num_x*num_y); types(1)
+                NN = length(sp_old);
+                sp_new=sp_old;
+                DTK = 1/4;
+ 
+    %Smoothing and use 2nd deriv to locate starting pt------------------------
+ 
+            if Nt>=10000 && nn==1
+                NSMOOTH = 100000*5; %NSMOOTH = 100000*7.5;
+            elseif Nt>=4000 && nn==1
+                    NSMOOTH = 100000*3;
+            elseif Nt>=3500 && nn==1
+                NSMOOTH = 100000;
+            elseif Nt>2000 && nn==1
+                NSMOOTH = 80000;
+            else
+                NSMOOTH = 40000*2;
+                if nn==2
+                   NSMOOTH = 500; %NSMOOTH = 150;
+                end    
+            end
+ 
+                endind = zeros(1,NSMOOTH);
+ 
+                for i = 1:NSMOOTH
+                    sp_new(2:(NN-1)) = sp_old([2:(NN-1)]) + DTK*(sp_old([1:(NN-2)])+sp_old([3:NN]) - 2.*sp_old([2:(NN-1)]));
+ 
+                    %SECOND DERIV
+                    sp_new_dd= (sp_new(3:NN) - 2*sp_new(2:(NN-1)) + sp_new(1:(NN-2)))/(deltat^2);  %diff(diff(sp_new)); 
+ 
+                    %Find indices of switches
+                    if sp_cur(length(sp_cur)) > sp_oth(length(sp_oth)) %dominant
+                        ind = find(sp_new_dd(1:(NN-3))>0 & sp_new_dd(2:(NN-2))<0); %pos to neg
+                    else %drops out
+                        ind = find(sp_new_dd(1:(NN-3))<0 & sp_new_dd(2:(NN-2))>0); %neg to pos
+                    end
+ 
+                    if isempty(ind) == 0
+                        endind(i) = ind(length(ind)); %store switch closest to end of traj
+                    else %no switch detected
+                        endind(i) = 1;
+                    end
+                    sp_old = sp_new;
+                    if i == NSMOOTH/2
+                        sp_old_half = sp_old;
+                    elseif i == round(NSMOOTH*0.75)
+                        sp_old_75 = sp_old;
+                    end
+                    
+                end
+ 
+                stpt = endind(length(endind));%mode(endind); %inflection pt and wattlt
+ 
+ 
+            %%Find attractor%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                w1=3; %5 %if you chg w1, must chg the # in index (i-w1+#)
+                winavg=0;
+                winsig=0;
+                winhatavg=0;
+                f = 2;
+                winhatsig =0;
+ 
+                for i= length(sp_old):-1:stpt %based on smoothed traj
+                    if abs(winavg-winhatavg)> f*(max(winhatsig, winsig))
+                        break
+                    else
+                        winavg=mean(sp_old(((i-w1+3):i)));
+                        winsig=max(0.1, std(sp_old(((i-w1+3):i))));
+                        winhatavg = mean(sp_old((i-w1+3):length(sp_old)));
+                        winhatsig = max(0.01,std(sp_old((i-w1+3):length(sp_old))));
+                    end
+                end
+ 
+                winhatavg = mean(sp_old((i+w1+1):length(sp_old))); %attractor
+                winhatsig = std(sp_old((i+w1+1):length(sp_old))); %att sd
+
+             %Automated search for boundaries%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                %Attractor boundaries.........................
+                    %Left attractor boundary
+                        wattlt = stpt;
+ 
+ 
+                    %Right attractor boundary
+                            %%%%PARAMETER DECISIONS%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                w2 = 10;
+                                g=2; %g=1.7;
+                                sp_opt = sp_old; %use smoothed traj
+                                if n==12 && nn==1
+                                    g=1.715;
+                                end
+                                if nn==2 %For MA= less smoothing
+                                    w2 = 4;
+                                    sp_opt = sp_cur; %use orig traj
+                                end
+    %                         end
+                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+                        winaS=zeros(1,(length(sp_old)-wattlt));
+                        winaShat = 0;
+                        winaSsig = 0;
+                        winaShatsig=0;
+ 
+                        for j= wattlt:1:length(sp_old)
+                            if abs(winaS(j-(wattlt-1))-winaShat)> g*(max(winaShatsig, winaSsig))
+                                break
+                            else
+                                if (j+w2) > length(sp_old) %goes beyond end of run
+                                    wattrt = NaN;
+                                    break
+                                elseif sum(sp_cur(:)~=0)<10 %really fast run
+                                    wattrt = 1;
+                                    break
+                                else
+                                    if sp_cur(length(sp_cur)) > sp_oth(length(sp_oth)) %dominant
+                                        if (sp_cur(1)== 28000) && (min(sp_opt)<(winhatavg-winhatsig)) || (min(sp_opt)>(winhatavg+winhatsig)) 
+                                            b1=polyfitn((j/40:0.025:(j+w2)/40)',log(max(0.0001, sp_opt(j:j+w2))) - winhatavg,1); %drops out code b.c. from above
+                                        else
+                                            b1=polyfitn((j/40:0.025:(j+w2)/40)',log(max(0.0001, winhatavg - sp_opt(j:j+w2))),1); 
+                                        end
+                                    else % drops out
+                                            b1=polyfitn((j/40:0.025:(j+w2)/40)',log(max(0.0001, sp_opt(j:j+w2))) - winhatavg,1);
+                                    end
+                                    winaS(j-(wattlt-2))=b1.Coefficients(1);
+                                    winaSsig=b1.ParameterStd(1);
+
+                                    winaShat = mean(winaS(winaS~=0));
+                                    winaShatsig = std(winaS(winaS~=0));
+ 
+                                    wattrt = j;
+                                end    
+                            end
+                        end
+ 
+ 
+                %Left repellor boundary
+                   wreplt = 2; %b.c if 1 get -inf for log space of first tstep since sp_cur(1) is subtracted
+ 
+                %Repellor Right boundary                        
+                    if isempty(ind) == 0
+                        mylogi = abs(sp_cur(10:length(sp_cur))-winhatavg)<0.02;
+                        if length(find(mylogi==1))==length(sp_cur(10:length(sp_cur))) %fast drop
+                            wreprt = 1;
+                        else
+                            w3 = 3; h=0.4;
+ 
+                            winrS=zeros(1,length(1:wattlt));
+                            winrShat = 0;
+                            winrSsig = 0;
+                            winrShatsig=0;
+ 
+                            sp_cur_d = (sp_cur(2:4) - sp_cur(1:3))/(deltat*2);
+                            sp_cur_d2 = (sp_cur(9:11) - sp_cur(8:10))/(deltat*2);
+ 
+                            if (sign(sp_cur_d(1)) ~= sign(sp_cur_d2(1))) && (nn~=1) %sinousoidal early on
+                                w=2; h=1; wreprt=4;%wreprt = 1; 
+                            else
+                                if nn==1 && n~=1
+                                    wreprt = datamat_preCO(n-1,2);
+                                else
+                                    if nn==1
+                                        mstart = 5; %push beyond hump to obtain repelling boundary
+                                    else
+                                        mstart =1;
+                                    end
+                                
+                                    for m= mstart:wattlt 
+                                        if abs(winrS(m)-winrShat)> h*(max(winrShatsig, winrSsig))
+                                            break
+                                        else
+                                            if sp_cur_d(1) <0 %deriv = negative
+                                                bb1=polyfitn((m/40:0.025:(m+w3)/40)',sp_cur(1) - sp_cur(m:(m+w3)),1);
+                                            else %deriv = positive
+                                                bb1=polyfitn((m/40:0.025:(m+w3)/40)',sp_cur(m:(m+w3)) - sp_cur(1),1);
+                                            end
+                                            winrS(m+1)=bb1.Coefficients(1); %slope
+                                            winrSsig=bb1.ParameterStd(1); %sigma of slope
+ 
+                                            winrShat = mean(winrS(winrS~=0));%mean of slopes approach
+                                            winrShatsig = sqrt((1/m)*(sum((winrS(2:m+1)-winrShat).^2)));%std(winrS(winrS~=0))
+                                        end
+                                    end
+ 
+                                    wreprt = m;% %Rt boundary of Repellor div
+                                end
+                            end
+                        end
+                    end
+ 
+ 
+ 
+            %Calc Time Scales%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            if 1
+                %Attracting
+                    if (wattlt ==1 && wattrt ==1)
+                        atttimesc = 0;
+                        atttau = 0; %or NaN ? 
+                        atttausig=0;
+                        bbb1 = struct([]);
+                    else
+                        if sp_cur(length(sp_cur)) > sp_oth(length(sp_oth)) %dominant
+                            logdata = real(log(winhatavg - sp_cur(wattlt:wattrt)));
+                            bbb1 = polyfitn((wattlt/40:0.025:wattrt/40)',logdata,1);
+                        else % drops out
+                            logdata = real(log(sp_cur(wattlt:wattrt) - winhatavg));
+                            bbb1 = polyfitn((wattlt/40:0.025:wattrt/40)',logdata,1);
+                        end
+                        atttau = bbb1.Coefficients(1);
+                        atttausig=bbb1.ParameterStd(1);
+                        atttimesc = abs(1/atttau);
+                    end
+ 
+                %Repellling
+                    if (wreplt ==2 && wreprt ==1) %|| isempty(ind) == 1 
+                        reptimesc = 0;
+                        reptau = 0;
+                        reptausig = 0;
+                        bbb2 = struct([]);
+                        besti = NaN;
+                    else %if isempty(ind) == 0 
+                        sp_cur_d = (sp_cur(2:4) - sp_cur(1:3))/(deltat*2);
+                        sp_cur_d2 = (sp_cur(9:11) - sp_cur(8:10))/(deltat*2);
+                        
+                        pvals = 0; %reset
+                        logdata = 0;
+                        if sp_cur_d(1) <0 %deriv = negative   
+                            reps = [32000:-400:sp_cur(1)]; % in #ofcells vs frac.cover
+                            LL=length(reps);
+                            repbbb2s = cell(LL,1);
+                            logdata(1:LL,1:length(wreplt:wreprt+1)) = real(log(reps(1:LL)'*ones(1,length(wreplt:wreprt+1)) - ones(LL,1)*sp_cur(wreplt:wreprt+1)'));
+                            for ii=1:LL
+                                bbb2 = polyfitn((wreplt/40:0.025:(wreprt+1)/40)',logdata(ii,:),1);
+                                pvals(ii) = bbb2.p(1);
+                                repbbb2s{ii} = bbb2;
+                            end
+                        else %deriv = positive
+                            reps = [-32000:400:sp_cur(1)];
+                            LL=length(reps);
+                            repbbb2s = cell(LL,1);
+                            logdata(1:LL,1:length(wreplt:wreprt+1)) = real(log(ones(LL,1)*sp_cur(wreplt:wreprt+1)') - reps(1:LL)'*ones(1,length(wreplt:wreprt+1))); % - sp_cur(1)
+                            for ii = 1:LL
+                                bbb2 = polyfitn((wreplt/40:0.025:(wreprt+1)/40)',logdata(ii,:),1);
+                                pvals(ii) = bbb2.p(1);
+                                repbbb2s{ii} = bbb2;      
+                            end
+                        end
+ 
+                        %Choose Best fit repellor based on p
+                        if nn==1
+                            bestv = pvals(1);
+                            besti = 1;
+                        else
+                            [bestv besti] = min(pvals);
+                        end
+                        %store slope for best
+                        reptau = repbbb2s{besti}.Coefficients(1);
+                        reptausig=repbbb2s{besti}.ParameterStd(1);
+                        reptimesc = abs(1/reptau);
+                    end
+                 %Transient Duration
+                    trandur = (wattlt - wreprt)/40; %in yrs
+            end
+
+            if nn == 1 %DO NOT SAVE WINHATAVG IN FRAC COV, BUT IN #CELLS B.C. IT WILL BE USED INCORR IN AUTOMATEDCALCTIMESC (IF NEEDED)
+                datamat_preCO(n,:) = [wreplt wreprt wattlt wattrt winhatavg winhatsig t2att atttimesc atttausig trandur reptimesc reptausig besti]; 
+            else
+                datamat_preMA(n,:) = [wreplt wreprt wattlt wattrt winhatavg winhatsig t2att atttimesc atttausig trandur reptimesc reptausig besti];
+            end
+
+        end
+        
+    end
+        datamatCO = [treat trial trajtypeCO aggCO aggPA datamat_preCO];
+        datamatMA = [treat trial trajtypeMA aggCO aggPA datamat_preMA];        
+        fuldatamatCO(dmcounter:(dmcounter+11),:) = datamatCO;
+        fuldatamatMA(dmcounter:(dmcounter+11),:) = datamatMA;
+        dmcounter = dmcounter+ tottreat;
+    
+end
+
